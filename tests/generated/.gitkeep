@@ -1,0 +1,3 @@
+# Generated tests
+
+The coding agent may add Jest tests here. They never replace `harness/acceptance/**`.

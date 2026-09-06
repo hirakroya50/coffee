@@ -1,0 +1,38 @@
+name: Safi Continuous Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: Task id used in artifacts/cycles/task-NN
+        required: true
+        default: "01"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Run continuous builder loop
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          TASK_ID: ${{ github.event.inputs.task_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run builder
+      - name: Upload cycle artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cycles-task-${{ github.event.inputs.task_id }}
+          path: artifacts/cycles/

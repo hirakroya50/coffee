@@ -3,6 +3,9 @@ info:
   title: Canonical Coffee Shop API
   version: 0.0.0
   description: Baseline OpenAPI contract for the coffee shop reference backend.
+servers:
+  - url: http://localhost:3000
+    description: Local development
 paths:
   /menu-items:
     get:
@@ -242,6 +245,8 @@ components:
         quantity: { type: integer }
         unit_price_cents: { type: integer }
         line_total_cents: { type: integer }
+        size: { type: string, nullable: true }
+        milk: { type: string, nullable: true }
     Order:
       type: object
       required: [id, customer_id, status, total_cents, created_at, updated_at, items]
@@ -276,6 +281,8 @@ components:
       properties:
         menu_item_id: { type: integer }
         quantity: { type: integer }
+        size: { type: string, enum: [SMALL, MEDIUM, LARGE] }
+        milk: { type: string, enum: [whole, skim, oat, almond] }
     CreateOrderRequest:
       type: object
       required: [customer_id, items]
