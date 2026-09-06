@@ -15,7 +15,7 @@ async function main() {
   const app = createApp(sql);
 
   app.listen(port, () => {
-    console.log(`Coffee shop API listening on ${port}`);
+    console.log(`Coffee shop API listening on: http://localhost:${port}`);
     console.log(`Swagger UI: http://localhost:${port}/docs`);
     console.log(`ReDoc:      http://localhost:${port}/redoc`);
   });
