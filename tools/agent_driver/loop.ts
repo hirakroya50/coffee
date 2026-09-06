@@ -10,7 +10,14 @@ export type LoopResult = {
   status: "PASS" | "FAIL" | "BLOCKED";
   cycles: number;
   reason?: string;
+  prUrl?: string;
 };
+
+export type OpenPrHook = (args: {
+  cwd: string;
+  taskId: string;
+  taskMarkdown: string;
+}) => Promise<{ prUrl?: string; skipped?: boolean; reason?: string } | void>;
 
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -21,9 +28,9 @@ export async function runLoop(options: {
   cwd: string;
   taskId: string;
   driver: AgentDriver;
-  commit?: boolean;
   testNamePattern?: string;
   skipBuild?: boolean;
+  openPr?: OpenPrHook;
   runTests?: () => CommandResult;
   runRegression?: () => CommandResult;
 }): Promise<LoopResult> {
@@ -62,7 +69,18 @@ export async function runLoop(options: {
     if (!verdict.approved) {
       return { status: "FAIL", cycles: cycle, reason: verdict.reasons.join("; ") };
     }
-    return { status: "PASS", cycles: cycle };
+    const pass: LoopResult = { status: "PASS", cycles: cycle };
+    if (options.openPr) {
+      const published = await options.openPr({
+        cwd,
+        taskId,
+        taskMarkdown: task,
+      });
+      if (published?.prUrl) {
+        pass.prUrl = published.prUrl;
+      }
+    }
+    return pass;
   };
 
   if (tests.ok) {
@@ -125,12 +143,16 @@ async function main() {
   const cwd = process.cwd();
   const taskId = process.env.TASK_ID ?? "01";
   const { createCursorDriver } = await import("./cursor_driver");
+  const { openPassPullRequest } = await import("./open_pr");
+  const skipPr = process.argv.includes("--no-pr");
   const result = await runLoop({
     cwd,
     taskId,
     driver: createCursorDriver(),
-    commit: process.argv.includes("--commit"),
     testNamePattern: process.env.TASK_TEST_PATTERN,
+    openPr: skipPr
+      ? undefined
+      : async (args) => openPassPullRequest(args),
   });
   writeJson(path.join(cwd, "artifacts", "cycles", `task-${taskId}`, "run-report.json"), result);
   console.log(JSON.stringify(result, null, 2));

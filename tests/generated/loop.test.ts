@@ -34,11 +34,16 @@ describe("test/triage/fix loop", () => {
     };
 
     let testRuns = 0;
+    let prCalls = 0;
     const result = await runLoop({
       cwd,
       taskId: "99",
       driver,
       skipBuild: true,
+      openPr: async () => {
+        prCalls += 1;
+        return { prUrl: "https://github.com/example/coffee/pull/1" };
+      },
       runTests: () => {
         testRuns += 1;
         if (testRuns === 1) {
@@ -69,6 +74,8 @@ describe("test/triage/fix loop", () => {
 
     expect(result.status).toBe("PASS");
     expect(result.cycles).toBe(1);
+    expect(result.prUrl).toBe("https://github.com/example/coffee/pull/1");
+    expect(prCalls).toBe(1);
     expect(attempts).toBe(1);
     const triage = JSON.parse(
       fs.readFileSync(
@@ -103,11 +110,15 @@ describe("test/triage/fix loop", () => {
         throw new Error("must not verify");
       },
     };
+    let prCalls = 0;
     const result = await runLoop({
       cwd,
       taskId: "98",
       driver,
       skipBuild: true,
+      openPr: async () => {
+        prCalls += 1;
+      },
       runTests: () => ({
         ok: false,
         command: "npm test",
@@ -117,5 +128,6 @@ describe("test/triage/fix loop", () => {
       }),
     });
     expect(result.status).toBe("BLOCKED");
+    expect(prCalls).toBe(0);
   });
 });
