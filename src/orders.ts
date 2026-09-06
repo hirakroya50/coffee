@@ -2,11 +2,13 @@ import type { Express } from "express";
 import { HttpError, type SqlClient } from "./sql";
 import { isOrderStatus, VALID_TRANSITIONS, type OrderStatus } from "./types";
 import { asyncRoute } from "./menu";
+import { priceOrderLine } from "./pricing";
 
 type MenuItemRow = {
   id: number;
   price_cents: number;
   active: number;
+  category: string;
 };
 
 type OrderRow = {
@@ -25,6 +27,8 @@ type OrderItemRow = {
   quantity: number;
   unit_price_cents: number;
   line_total_cents: number;
+  size: string | null;
+  milk: string | null;
 };
 
 async function getOrderWithItems(db: SqlClient, id: number) {
@@ -38,7 +42,7 @@ async function getOrderWithItems(db: SqlClient, id: number) {
     return null;
   }
   const items = await db.query<OrderItemRow>(
-    `SELECT id, order_id, menu_item_id, quantity, unit_price_cents, line_total_cents
+    `SELECT id, order_id, menu_item_id, quantity, unit_price_cents, line_total_cents, size, milk
      FROM order_items WHERE order_id = $1 ORDER BY id`,
     [id]
   );
@@ -76,6 +80,8 @@ export function registerOrderRoutes(app: Express, db: SqlClient): void {
             quantity: number;
             unit_price_cents: number;
             line_total_cents: number;
+            size: string | null;
+            milk: string | null;
           }> = [];
 
           for (const raw of items) {
@@ -88,14 +94,15 @@ export function registerOrderRoutes(app: Express, db: SqlClient): void {
               throw new HttpError(400, "quantity must be >= 1");
             }
             const menuItemResult = await tx.query<MenuItemRow>(
-              "SELECT id, price_cents, active FROM menu_items WHERE id = $1",
+              "SELECT id, price_cents, active, category FROM menu_items WHERE id = $1",
               [menuItemId]
             );
             const menuItem = menuItemResult.rows[0];
             if (!menuItem || Number(menuItem.active) !== 1) {
               throw new HttpError(400, "menu item unavailable");
             }
-            const unitPriceCents = Number(menuItem.price_cents);
+            const pricedLine = priceOrderLine(menuItem, raw);
+            const unitPriceCents = pricedLine.unitPriceCents;
             const lineTotalCents = quantity * unitPriceCents;
             totalCents += lineTotalCents;
             priced.push({
@@ -103,6 +110,8 @@ export function registerOrderRoutes(app: Express, db: SqlClient): void {
               quantity,
               unit_price_cents: unitPriceCents,
               line_total_cents: lineTotalCents,
+              size: pricedLine.size,
+              milk: pricedLine.milk,
             });
           }
 
@@ -117,14 +126,16 @@ export function registerOrderRoutes(app: Express, db: SqlClient): void {
           for (const line of priced) {
             await tx.query(
               `INSERT INTO order_items
-               (order_id, menu_item_id, quantity, unit_price_cents, line_total_cents)
-               VALUES ($1, $2, $3, $4, $5)`,
+               (order_id, menu_item_id, quantity, unit_price_cents, line_total_cents, size, milk)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
               [
                 newOrderId,
                 line.menu_item_id,
                 line.quantity,
                 line.unit_price_cents,
                 line.line_total_cents,
+                line.size,
+                line.milk,
               ]
             );
           }

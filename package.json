@@ -7,9 +7,13 @@
     "start": "tsx src/server.ts",
     "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
     "validate:mcp": "tsx tools/mcp_readiness/validate.ts",
-    "db:setup": "tsx tools/setup_db.ts"
+    "db:setup": "tsx tools/setup_db.ts",
+    "harness": "tsx harness/cli.ts full",
+    "harness:protect": "tsx harness/cli.ts protect",
+    "builder": "tsx tools/agent_driver/loop.ts"
   },
   "dependencies": {
+    "@cursor/sdk": "^1.0.31",
     "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "pg": "^8.23.0",

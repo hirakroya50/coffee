@@ -32,3 +32,6 @@ CREATE TABLE IF NOT EXISTS order_items (
   unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
   line_total_cents INTEGER NOT NULL CHECK (line_total_cents >= 0)
 );
+
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS size TEXT;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS milk TEXT;
