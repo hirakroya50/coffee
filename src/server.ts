@@ -1,12 +1,27 @@
-import path from "node:path";
+import "dotenv/config";
 import { createApp } from "./app";
-import { openFileDatabase } from "./db";
+import { openCloudDatabase } from "./db";
 
-const dbPath = process.env.SQLITE_PATH ?? path.join(__dirname, "..", "data", "coffee.sqlite");
-const port = Number(process.env.PORT ?? 3000);
-const db = openFileDatabase(dbPath);
-const app = createApp(db);
+async function main() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error(
+      "DATABASE_URL is missing. Copy .env.example to .env and paste a Postgres connection string."
+    );
+  }
 
-app.listen(port, () => {
-  console.log(`Coffee shop API listening on ${port}`);
+  const port = Number(process.env.PORT ?? 3000);
+  const { sql } = await openCloudDatabase(databaseUrl);
+  const app = createApp(sql);
+
+  app.listen(port, () => {
+    console.log(`Coffee shop API listening on ${port}`);
+    console.log(`Swagger UI: http://localhost:${port}/docs`);
+    console.log(`ReDoc:      http://localhost:${port}/redoc`);
+  });
+}
+
+void main().catch((err) => {
+  console.error(err);
+  process.exit(1);
 });

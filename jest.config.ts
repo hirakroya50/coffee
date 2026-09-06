@@ -5,6 +5,7 @@ const config: Config = {
   testEnvironment: "node",
   testMatch: ["**/harness/acceptance/**/*.test.ts"],
   watchman: false,
+  forceExit: true,
 };
 
 export default config;

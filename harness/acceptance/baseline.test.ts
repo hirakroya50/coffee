@@ -2,13 +2,13 @@ import request from "supertest";
 import { createApp } from "../../src/app";
 import { createFreshDatabase } from "../../src/db";
 
-function app() {
-  return createApp(createFreshDatabase());
+async function app() {
+  return createApp(await createFreshDatabase());
 }
 
 describe("baseline coffee shop API", () => {
   test("lists active menu items and fetches one by id", async () => {
-    const server = app();
+    const server = await app();
     const list = await request(server).get("/menu-items");
     expect(list.status).toBe(200);
     expect(list.body.length).toBeGreaterThanOrEqual(4);
@@ -29,7 +29,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("creates and fetches a customer; duplicate email is 409", async () => {
-    const server = app();
+    const server = await app();
     const created = await request(server)
       .post("/customers")
       .send({ name: "Cara", email: "cara@example.com" });
@@ -50,7 +50,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("creates an order as PENDING with persisted line items", async () => {
-    const server = app();
+    const server = await app();
     const created = await request(server)
       .post("/orders")
       .send({
@@ -72,8 +72,8 @@ describe("baseline coffee shop API", () => {
     expect(missing.status).toBe(404);
   });
 
-  test("prices orders from SQLite and ignores client-sent prices", async () => {
-    const server = app();
+  test("prices orders from the database and ignores client-sent prices", async () => {
+    const server = await app();
     const created = await request(server)
       .post("/orders")
       .send({
@@ -98,7 +98,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("rejects invalid createOrder payloads", async () => {
-    const server = app();
+    const server = await app();
     const empty = await request(server)
       .post("/orders")
       .send({ customer_id: 1, items: [] });
@@ -138,7 +138,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("lists customer orders and 404s missing customer", async () => {
-    const server = app();
+    const server = await app();
     await request(server)
       .post("/orders")
       .send({
@@ -155,7 +155,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("enforces valid order status transitions", async () => {
-    const server = app();
+    const server = await app();
     const created = await request(server)
       .post("/orders")
       .send({
@@ -198,7 +198,7 @@ describe("baseline coffee shop API", () => {
   });
 
   test("allows PENDING to CANCELLED and treats CANCELLED as terminal", async () => {
-    const server = app();
+    const server = await app();
     const created = await request(server)
       .post("/orders")
       .send({

@@ -1,6 +1,7 @@
-import type { Express, Request, Response } from "express";
-import type Database from "better-sqlite3";
+import type { Express } from "express";
+import { HttpError, type SqlClient } from "./sql";
 import { isOrderStatus, VALID_TRANSITIONS, type OrderStatus } from "./types";
+import { asyncRoute } from "./menu";
 
 type MenuItemRow = {
   id: number;
@@ -26,172 +27,182 @@ type OrderItemRow = {
   line_total_cents: number;
 };
 
-function getOrderWithItems(db: Database.Database, id: number) {
-  const order = db
-    .prepare(
-      `SELECT id, customer_id, status, total_cents, created_at, updated_at
-       FROM orders WHERE id = ?`
-    )
-    .get(id) as OrderRow | undefined;
+async function getOrderWithItems(db: SqlClient, id: number) {
+  const orderResult = await db.query<OrderRow>(
+    `SELECT id, customer_id, status, total_cents, created_at, updated_at
+     FROM orders WHERE id = $1`,
+    [id]
+  );
+  const order = orderResult.rows[0];
   if (!order) {
     return null;
   }
-  const items = db
-    .prepare(
-      `SELECT id, order_id, menu_item_id, quantity, unit_price_cents, line_total_cents
-       FROM order_items WHERE order_id = ? ORDER BY id`
-    )
-    .all(id) as OrderItemRow[];
-  return { ...order, items };
+  const items = await db.query<OrderItemRow>(
+    `SELECT id, order_id, menu_item_id, quantity, unit_price_cents, line_total_cents
+     FROM order_items WHERE order_id = $1 ORDER BY id`,
+    [id]
+  );
+  return { ...order, items: items.rows };
 }
 
-export function registerOrderRoutes(app: Express, db: Database.Database): void {
-  app.post("/orders", (req: Request, res: Response) => {
-    const customerId = Number(req.body?.customer_id);
-    const items = req.body?.items;
-    if (!Number.isInteger(customerId) || customerId < 1) {
-      res.status(400).json({ error: "customer_id is required" });
-      return;
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: "items must be a non-empty array" });
-      return;
-    }
-
-    const customer = db
-      .prepare("SELECT id FROM customers WHERE id = ?")
-      .get(customerId);
-    if (!customer) {
-      res.status(400).json({ error: "customer not found" });
-      return;
-    }
-
-    const create = db.transaction(() => {
-      let totalCents = 0;
-      const priced: Array<{
-        menu_item_id: number;
-        quantity: number;
-        unit_price_cents: number;
-        line_total_cents: number;
-      }> = [];
-
-      for (const raw of items) {
-        const menuItemId = Number(raw?.menu_item_id);
-        const quantity = Number(raw?.quantity);
-        if (!Number.isInteger(menuItemId) || menuItemId < 1) {
-          throw Object.assign(new Error("invalid menu_item_id"), { status: 400 });
-        }
-        if (!Number.isInteger(quantity) || quantity < 1) {
-          throw Object.assign(new Error("quantity must be >= 1"), { status: 400 });
-        }
-        const menuItem = db
-          .prepare(
-            "SELECT id, price_cents, active FROM menu_items WHERE id = ?"
-          )
-          .get(menuItemId) as MenuItemRow | undefined;
-        if (!menuItem || menuItem.active !== 1) {
-          throw Object.assign(new Error("menu item unavailable"), { status: 400 });
-        }
-        const unitPriceCents = menuItem.price_cents;
-        const lineTotalCents = quantity * unitPriceCents;
-        totalCents += lineTotalCents;
-        priced.push({
-          menu_item_id: menuItemId,
-          quantity,
-          unit_price_cents: unitPriceCents,
-          line_total_cents: lineTotalCents,
-        });
-      }
-
-      const orderResult = db
-        .prepare(
-          `INSERT INTO orders (customer_id, status, total_cents)
-           VALUES (?, 'PENDING', ?)`
-        )
-        .run(customerId, totalCents);
-      const orderId = Number(orderResult.lastInsertRowid);
-
-      const insertItem = db.prepare(
-        `INSERT INTO order_items
-         (order_id, menu_item_id, quantity, unit_price_cents, line_total_cents)
-         VALUES (?, ?, ?, ?, ?)`
-      );
-      for (const line of priced) {
-        insertItem.run(
-          orderId,
-          line.menu_item_id,
-          line.quantity,
-          line.unit_price_cents,
-          line.line_total_cents
-        );
-      }
-      return orderId;
-    });
-
-    try {
-      const orderId = create();
-      res.status(201).json(getOrderWithItems(db, orderId));
-    } catch (err) {
-      const status = (err as { status?: number }).status;
-      if (status === 400) {
-        res.status(400).json({ error: (err as Error).message });
+export function registerOrderRoutes(app: Express, db: SqlClient): void {
+  app.post(
+    "/orders",
+    asyncRoute(async (req, res) => {
+      const customerId = Number(req.body?.customer_id);
+      const items = req.body?.items;
+      if (!Number.isInteger(customerId) || customerId < 1) {
+        res.status(400).json({ error: "customer_id is required" });
         return;
       }
-      throw err;
-    }
-  });
+      if (!Array.isArray(items) || items.length === 0) {
+        res.status(400).json({ error: "items must be a non-empty array" });
+        return;
+      }
 
-  app.get("/orders/:id", (req: Request, res: Response) => {
-    const order = getOrderWithItems(db, Number(req.params.id));
-    if (!order) {
-      res.status(404).json({ error: "Order not found" });
-      return;
-    }
-    res.json(order);
-  });
+      const customer = await db.query("SELECT id FROM customers WHERE id = $1", [
+        customerId,
+      ]);
+      if (!customer.rows[0]) {
+        res.status(400).json({ error: "customer not found" });
+        return;
+      }
 
-  app.get("/customers/:id/orders", (req: Request, res: Response) => {
-    const customerId = Number(req.params.id);
-    const customer = db
-      .prepare("SELECT id FROM customers WHERE id = ?")
-      .get(customerId);
-    if (!customer) {
-      res.status(404).json({ error: "Customer not found" });
-      return;
-    }
-    const orders = db
-      .prepare(
+      try {
+        const orderId = await db.transact(async (tx) => {
+          let totalCents = 0;
+          const priced: Array<{
+            menu_item_id: number;
+            quantity: number;
+            unit_price_cents: number;
+            line_total_cents: number;
+          }> = [];
+
+          for (const raw of items) {
+            const menuItemId = Number(raw?.menu_item_id);
+            const quantity = Number(raw?.quantity);
+            if (!Number.isInteger(menuItemId) || menuItemId < 1) {
+              throw new HttpError(400, "invalid menu_item_id");
+            }
+            if (!Number.isInteger(quantity) || quantity < 1) {
+              throw new HttpError(400, "quantity must be >= 1");
+            }
+            const menuItemResult = await tx.query<MenuItemRow>(
+              "SELECT id, price_cents, active FROM menu_items WHERE id = $1",
+              [menuItemId]
+            );
+            const menuItem = menuItemResult.rows[0];
+            if (!menuItem || Number(menuItem.active) !== 1) {
+              throw new HttpError(400, "menu item unavailable");
+            }
+            const unitPriceCents = Number(menuItem.price_cents);
+            const lineTotalCents = quantity * unitPriceCents;
+            totalCents += lineTotalCents;
+            priced.push({
+              menu_item_id: menuItemId,
+              quantity,
+              unit_price_cents: unitPriceCents,
+              line_total_cents: lineTotalCents,
+            });
+          }
+
+          const orderResult = await tx.query<{ id: number }>(
+            `INSERT INTO orders (customer_id, status, total_cents)
+             VALUES ($1, 'PENDING', $2)
+             RETURNING id`,
+            [customerId, totalCents]
+          );
+          const newOrderId = Number(orderResult.rows[0].id);
+
+          for (const line of priced) {
+            await tx.query(
+              `INSERT INTO order_items
+               (order_id, menu_item_id, quantity, unit_price_cents, line_total_cents)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                newOrderId,
+                line.menu_item_id,
+                line.quantity,
+                line.unit_price_cents,
+                line.line_total_cents,
+              ]
+            );
+          }
+          return newOrderId;
+        });
+        res.status(201).json(await getOrderWithItems(db, orderId));
+      } catch (err) {
+        if (err instanceof HttpError) {
+          res.status(err.status).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+    })
+  );
+
+  app.get(
+    "/orders/:id",
+    asyncRoute(async (req, res) => {
+      const order = await getOrderWithItems(db, Number(req.params.id));
+      if (!order) {
+        res.status(404).json({ error: "Order not found" });
+        return;
+      }
+      res.json(order);
+    })
+  );
+
+  app.get(
+    "/customers/:id/orders",
+    asyncRoute(async (req, res) => {
+      const customerId = Number(req.params.id);
+      const customer = await db.query("SELECT id FROM customers WHERE id = $1", [
+        customerId,
+      ]);
+      if (!customer.rows[0]) {
+        res.status(404).json({ error: "Customer not found" });
+        return;
+      }
+      const orders = await db.query<OrderRow>(
         `SELECT id, customer_id, status, total_cents, created_at, updated_at
-         FROM orders WHERE customer_id = ? ORDER BY id`
-      )
-      .all(customerId) as OrderRow[];
-    res.json(orders);
-  });
+         FROM orders WHERE customer_id = $1 ORDER BY id`,
+        [customerId]
+      );
+      res.json(orders.rows);
+    })
+  );
 
-  app.patch("/orders/:id/status", (req: Request, res: Response) => {
-    const id = Number(req.params.id);
-    const next = req.body?.status;
-    if (typeof next !== "string" || !isOrderStatus(next)) {
-      res.status(400).json({ error: "invalid status" });
-      return;
-    }
-    const existing = db
-      .prepare("SELECT id, status FROM orders WHERE id = ?")
-      .get(id) as { id: number; status: OrderStatus } | undefined;
-    if (!existing) {
-      res.status(404).json({ error: "Order not found" });
-      return;
-    }
-    const allowed = VALID_TRANSITIONS[existing.status];
-    if (!allowed.includes(next)) {
-      res.status(409).json({
-        error: `cannot transition from ${existing.status} to ${next}`,
-      });
-      return;
-    }
-    db.prepare(
-      `UPDATE orders SET status = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(next, id);
-    res.json(getOrderWithItems(db, id));
-  });
+  app.patch(
+    "/orders/:id/status",
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+      const next = req.body?.status;
+      if (typeof next !== "string" || !isOrderStatus(next)) {
+        res.status(400).json({ error: "invalid status" });
+        return;
+      }
+      const existingResult = await db.query<{ id: number; status: OrderStatus }>(
+        "SELECT id, status FROM orders WHERE id = $1",
+        [id]
+      );
+      const existing = existingResult.rows[0];
+      if (!existing) {
+        res.status(404).json({ error: "Order not found" });
+        return;
+      }
+      const allowed = VALID_TRANSITIONS[existing.status];
+      if (!allowed.includes(next)) {
+        res.status(409).json({
+          error: `cannot transition from ${existing.status} to ${next}`,
+        });
+        return;
+      }
+      await db.query(
+        `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2`,
+        [next, id]
+      );
+      res.json(await getOrderWithItems(db, id));
+    })
+  );
 }
