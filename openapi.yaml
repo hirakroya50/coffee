@@ -1,0 +1,292 @@
+openapi: 3.1.0
+info:
+  title: Canonical Coffee Shop API
+  version: 0.0.0
+  description: Baseline OpenAPI contract for the coffee shop reference backend.
+paths:
+  /menu-items:
+    get:
+      operationId: listMenuItems
+      summary: List menu items
+      description: Returns every active menu item with server-stored prices.
+      responses:
+        "200":
+          description: Active menu items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuItemList"
+  /menu-items/{id}:
+    get:
+      operationId: getMenuItem
+      summary: Get a menu item
+      description: Returns one menu item by id, including inactive items.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Menu item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MenuItem"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /customers:
+    post:
+      operationId: createCustomer
+      summary: Create a customer
+      description: Creates a customer with a unique email address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCustomerRequest"
+      responses:
+        "201":
+          description: Created customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      summary: Get a customer
+      description: Returns one customer by id.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /customers/{id}/orders:
+    get:
+      operationId: listCustomerOrders
+      summary: List customer orders
+      description: Returns all orders for a customer.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Customer orders
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderSummaryList"
+        "404":
+          description: Customer not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /orders:
+    post:
+      operationId: createOrder
+      summary: Create an order
+      description: Creates an order using SQLite menu prices, computed line totals, and a PENDING status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: Created order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /orders/{id}:
+    get:
+      operationId: getOrder
+      summary: Get an order
+      description: Returns an order and its line items.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /orders/{id}/status:
+    patch:
+      operationId: updateOrderStatus
+      summary: Update order status
+      description: Applies a valid order-state transition and rejects illegal jumps.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrderStatusRequest"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: Invalid status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Illegal transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    MenuItem:
+      type: object
+      required: [id, sku, name, description, category, price_cents, active]
+      properties:
+        id: { type: integer }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [drink, food] }
+        price_cents: { type: integer }
+        active: { type: integer }
+    MenuItemList:
+      type: array
+      items:
+        $ref: "#/components/schemas/MenuItem"
+    Customer:
+      type: object
+      required: [id, name, email, created_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        created_at: { type: string }
+    CreateCustomerRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name: { type: string }
+        email: { type: string }
+    OrderItem:
+      type: object
+      required: [id, order_id, menu_item_id, quantity, unit_price_cents, line_total_cents]
+      properties:
+        id: { type: integer }
+        order_id: { type: integer }
+        menu_item_id: { type: integer }
+        quantity: { type: integer }
+        unit_price_cents: { type: integer }
+        line_total_cents: { type: integer }
+    Order:
+      type: object
+      required: [id, customer_id, status, total_cents, created_at, updated_at, items]
+      properties:
+        id: { type: integer }
+        customer_id: { type: integer }
+        status: { type: string }
+        total_cents: { type: integer }
+        created_at: { type: string }
+        updated_at: { type: string }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+    OrderSummary:
+      type: object
+      required: [id, customer_id, status, total_cents, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        customer_id: { type: integer }
+        status: { type: string }
+        total_cents: { type: integer }
+        created_at: { type: string }
+        updated_at: { type: string }
+    OrderSummaryList:
+      type: array
+      items:
+        $ref: "#/components/schemas/OrderSummary"
+    CreateOrderItemRequest:
+      type: object
+      required: [menu_item_id, quantity]
+      properties:
+        menu_item_id: { type: integer }
+        quantity: { type: integer }
+    CreateOrderRequest:
+      type: object
+      required: [customer_id, items]
+      properties:
+        customer_id: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreateOrderItemRequest"
+    UpdateOrderStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
