@@ -25,48 +25,70 @@ npm run harness:protect
 
 Acceptance tests use in-memory Postgres (PGlite), not `DATABASE_URL`.
 
-## TASK → Cursor build → harness
+## Builder loop (demo flow)
 
-1. Start from a known-good commit (`git pull` so orchestrator fixes are present).
-2. Protected tests live in `harness/acceptance/` (the builder must not edit them).
-3. Run the loop (needs `CURSOR_API_KEY`). `TASK_ID` loads `tasks/TASK-{id}.md` into `TASK.md` automatically:
-
-```bash
-TASK_ID=01 npm run builder
+```mermaid
+flowchart LR
+  task[Task + workflow] --> build[AI build]
+  build --> test[Run tests]
+  test -->|pass| pr[Open PR]
+  test -->|fail| fix[Fix up to 5x]
+  fix --> test
+  fix -->|still fail| fail[max cycles exceeded]
 ```
 
-4. Inspect `artifacts/cycles/task-01/`. Max 5 triage/fix cycles. `SPEC_AMBIGUITY` stops as BLOCKED.
+1. Push the repo (includes `tasks/TASK-{id}.md` and `harness/acceptance/` tests).
+2. GitHub: **Actions → Safi Continuous Builder → Run workflow**.
+3. Set `task_id` (default **11** — health check demo).
+4. Flow: **build → test → pass → PR**, or **fail → fix (max 5) → test → pass → PR**.
 
-On **PASS** (tests + verifier), the builder creates a **new** branch `cursor/task-{id}-{timestamp}`, commits, pushes, and opens a **PR to `main`**. It does not merge. You still approve the PR.
-
-Local PR creation needs [GitHub CLI](https://cli.github.com/) (`gh auth login`). Dry run without git/PR:
+`TASK_ID` loads `tasks/TASK-{id}.md` automatically. No manual copy into `TASK.md`.
 
 ```bash
-TASK_ID=01 npm run builder -- --no-pr
+TASK_ID=11 npm run builder -- --no-pr   # local dry run
 ```
 
-GitHub: Actions → **Safi Continuous Builder** → Run workflow. Secrets: `CURSOR_API_KEY`. The workflow can open the PR with `GITHUB_TOKEN`.
+### Demo for senior review
 
-Proof tasks: `tasks/TASK-01.md` (sizes) through `TASK-10.md`, plus `TASK-11.md` (health check — easiest PR demo).
+| Step | Action |
+|------|--------|
+| 1 | Use `task_id: 11` (adds `GET /health`) |
+| 2 | Run workflow on your feature branch |
+| 3 | Watch `[builder]` logs: Building → Running tests → Fix cycle N → PR |
+| 4 | On success, open the `prUrl` from the job log JSON |
+
+**Success:**
+
+```json
+{ "status": "PASS", "cycles": 1, "prUrl": "https://github.com/.../pull/..." }
+```
+
+**Task already done (no PR):**
+
+```json
+{ "status": "PASS", "cycles": 0, "prSkipped": "task already implemented; nothing to commit" }
+```
+
+**Failed after 5 fix attempts:**
+
+```json
+{ "status": "FAIL", "cycles": 5, "reason": "max cycles exceeded, after 5 loop circle" }
+```
 
 ### Builder outcomes
 
-| Result | `cycles` | Meaning |
-|--------|----------|---------|
-| `PROTECTED_PATH_VIOLATION` | — | Agent edited `TASK.md` or `harness/acceptance/**` after loop start |
-| `FAIL` | `0` | Tests passed but verifier rejected the candidate diff |
-| `FAIL` | `1..5` | Triage/fix loop ran but tests still failed after 5 attempts |
-| `PASS` | `0` | Task already implemented (empty candidate diff) or fixed on first try |
-| `PASS` | `N` | Agent fixed failing tests in N cycles |
-| `BLOCKED` | `1..5` | Triage reported `SPEC_AMBIGUITY` |
+| Result | Meaning |
+|--------|---------|
+| `PASS` + `prUrl` | Tests passed, PR opened to `main` |
+| `PASS` + `prSkipped` | Tests passed, nothing new to commit |
+| `FAIL` + `cycles: 5` | Fix loop exhausted |
+| `BLOCKED` | Triage reported `SPEC_AMBIGUITY` |
+| `PROTECTED_PATH_VIOLATION` | Agent edited `TASK.md` or acceptance tests |
 
-### Seeing the triage/fix loop
+### Options
 
-If a task is **already implemented** on your branch, tests pass immediately (`cycles: 0`) and the builder may PASS without calling the verifier.
+- `--no-pr` — local run without opening a PR
+- `BUILDER_FULL_TESTS=1` — run full `npm test` instead of task-scoped tests
+- `CURSOR_API_KEY` — required for the agent (local and CI)
 
-To exercise the fix loop, run from a commit **before** that feature exists, or use a task whose acceptance tests still fail. For a quick **PR demo**, use `TASK_ID=11` (health check — one small endpoint).
-
-```bash
-git checkout <commit-before-feature>
-TASK_ID=03 npm run builder -- --no-pr
-```
+Proof tasks: `tasks/TASK-01.md` through `TASK-11.md`. **TASK-11** is the easiest PR demo.

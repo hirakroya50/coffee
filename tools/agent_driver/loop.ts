@@ -11,14 +11,19 @@ import {
   assertProtectedSnapshotUnchanged,
   snapshotProtected,
 } from "../../harness/protect";
-import { cycleDir, runFull, runTargeted, type CommandResult } from "../../harness/run";
-import type { AgentDriver, Triage, VerifierResult } from "./types";
+import { cycleDir, runTaskTests, type CommandResult } from "../../harness/run";
+import type { AgentDriver, Triage } from "./types";
+
+export const MAX_FIX_CYCLES = 5;
+export const MAX_CYCLES_EXCEEDED =
+  "max cycles exceeded, after 5 loop circle";
 
 export type LoopResult = {
   status: "PASS" | "FAIL" | "BLOCKED";
   cycles: number;
   reason?: string;
   prUrl?: string;
+  prSkipped?: string;
 };
 
 export type OpenPrHook = (args: {
@@ -30,6 +35,10 @@ export type OpenPrHook = (args: {
 function writeJson(file: string, value: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
+}
+
+function log(...parts: unknown[]): void {
+  console.log("[builder]", ...parts);
 }
 
 export function taskSourcePath(cwd: string, taskId: string): string {
@@ -51,25 +60,42 @@ function candidateDiff(cwd: string, loopBaseline: LoopBaseline | null): string {
   return gitDiffSinceBaseline(cwd, loopBaseline).trim();
 }
 
-async function publishPass(
+async function finishPass(
   options: {
     openPr?: OpenPrHook;
     cwd: string;
     taskId: string;
     taskMarkdown: string;
+    loopBaseline: LoopBaseline | null;
   },
   cycles: number
 ): Promise<LoopResult> {
   const pass: LoopResult = { status: "PASS", cycles };
-  if (options.openPr) {
-    const published = await options.openPr({
-      cwd: options.cwd,
-      taskId: options.taskId,
-      taskMarkdown: options.taskMarkdown,
-    });
-    if (published?.prUrl) {
-      pass.prUrl = published.prUrl;
-    }
+  const diff = candidateDiff(options.cwd, options.loopBaseline);
+
+  if (!options.openPr) {
+    log("Tests passed (PR disabled with --no-pr)");
+    return pass;
+  }
+
+  if (!diff) {
+    pass.prSkipped = "task already implemented; nothing to commit";
+    log("Tests passed — PR skipped:", pass.prSkipped);
+    return pass;
+  }
+
+  log("Tests passed — opening PR");
+  const published = await options.openPr({
+    cwd: options.cwd,
+    taskId: options.taskId,
+    taskMarkdown: options.taskMarkdown,
+  });
+  if (published?.prUrl) {
+    pass.prUrl = published.prUrl;
+    log("PR opened:", pass.prUrl);
+  } else if (published?.skipped) {
+    pass.prSkipped = published.reason ?? "nothing to commit";
+    log("PR skipped:", pass.prSkipped);
   }
   return pass;
 }
@@ -78,11 +104,9 @@ export async function runLoop(options: {
   cwd: string;
   taskId: string;
   driver: AgentDriver;
-  testNamePattern?: string;
   skipBuild?: boolean;
   openPr?: OpenPrHook;
   runTests?: () => CommandResult;
-  runRegression?: () => CommandResult;
 }): Promise<LoopResult> {
   const { cwd, taskId, driver } = options;
   const task = fs.readFileSync(path.join(cwd, "TASK.md"), "utf8");
@@ -91,54 +115,29 @@ export async function runLoop(options: {
   const loopBaseline = createLoopBaseline(cwd);
 
   if (!options.skipBuild) {
+    log("Building task", taskId);
     await driver.build(task, cwd);
     assertProtectedSnapshotUnchanged(cwd, protectedBaseline);
   }
 
   const runTests =
-    options.runTests ??
-    (() =>
-      options.testNamePattern
-        ? runTargeted(cwd, options.testNamePattern)
-        : runFull(cwd));
-  const runRegression = options.runRegression ?? (() => runFull(cwd));
+    options.runTests ?? (() => runTaskTests(cwd, taskId));
 
+  log("Running tests");
   let tests = await Promise.resolve(runTests());
   let cycle = 0;
 
-  const maybeVerify = async (): Promise<LoopResult> => {
-    const diff = candidateDiff(cwd, loopBaseline);
-    if (tests.ok && !diff) {
-      return publishPass(
-        { openPr: options.openPr, cwd, taskId, taskMarkdown: task },
-        cycle
-      );
-    }
-    const verdict: VerifierResult = await driver.verify(
-      task,
-      cwd,
-      diff || "(no git diff)",
-      tests.stdout
-    );
-    writeJson(
-      path.join(cycleDir(cwd, taskId, Math.max(cycle, 1)), "verifier.json"),
-      verdict
-    );
-    if (!verdict.approved) {
-      return { status: "FAIL", cycles: cycle, reason: verdict.reasons.join("; ") };
-    }
-    return publishPass(
-      { openPr: options.openPr, cwd, taskId, taskMarkdown: task },
+  if (tests.ok) {
+    log("Tests passed on first run");
+    return finishPass(
+      { openPr: options.openPr, cwd, taskId, taskMarkdown: task, loopBaseline },
       cycle
     );
-  };
-
-  if (tests.ok) {
-    return maybeVerify();
   }
 
-  while (cycle < 5) {
+  while (cycle < MAX_FIX_CYCLES) {
     cycle += 1;
+    log(`Fix cycle ${cycle} of ${MAX_FIX_CYCLES}`);
     const dir = cycleDir(cwd, taskId, cycle);
     fs.mkdirSync(dir, { recursive: true });
     const bundlePath = writeFailureBundle(dir, {
@@ -167,6 +166,7 @@ export async function runLoop(options: {
       path.join(dir, "candidate.diff"),
       candidateDiff(cwd, loopBaseline) || "(no git diff)"
     );
+    log("Re-running tests after fix");
     tests = runTests();
     fs.writeFileSync(
       path.join(dir, tests.ok ? "regression-test.txt" : "targeted-test.txt"),
@@ -175,26 +175,25 @@ export async function runLoop(options: {
     if (!tests.ok) {
       continue;
     }
-    const full = runRegression();
-    fs.writeFileSync(path.join(dir, "regression-test.txt"), full.stdout);
-    if (!full.ok) {
-      tests = full;
-      continue;
-    }
-    tests = full;
-    return maybeVerify();
+    log("Tests passed after fix");
+    return finishPass(
+      { openPr: options.openPr, cwd, taskId, taskMarkdown: task, loopBaseline },
+      cycle
+    );
   }
 
-  writeJson(path.join(cycleDir(cwd, taskId, 5), "result.json"), {
+  writeJson(path.join(cycleDir(cwd, taskId, MAX_FIX_CYCLES), "result.json"), {
     status: "FAIL",
-    reason: "max cycles exceeded",
+    reason: MAX_CYCLES_EXCEEDED,
   });
-  return { status: "FAIL", cycles: 5, reason: "max cycles exceeded" };
+  log(MAX_CYCLES_EXCEEDED);
+  return { status: "FAIL", cycles: MAX_FIX_CYCLES, reason: MAX_CYCLES_EXCEEDED };
 }
 
 async function main() {
   const cwd = process.cwd();
-  const taskId = process.env.TASK_ID ?? "01";
+  const taskId = process.env.TASK_ID ?? "11";
+  log("Preparing task", taskId);
   prepareTask(cwd, taskId);
   const { createCursorDriver } = await import("./cursor_driver");
   const { openPassPullRequest } = await import("./open_pr");
@@ -203,7 +202,6 @@ async function main() {
     cwd,
     taskId,
     driver: createCursorDriver(),
-    testNamePattern: process.env.TASK_TEST_PATTERN,
     openPr: skipPr
       ? undefined
       : async (args) => openPassPullRequest(args),

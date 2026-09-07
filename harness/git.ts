@@ -94,10 +94,16 @@ export function createLoopBaseline(cwd: string): LoopBaseline | null {
     return null;
   }
   try {
-    const ref = execFileSync("git", ["stash", "create", "-u"], {
+    const stashRef = execFileSync("git", ["stash", "create", "-u"], {
       cwd,
       encoding: "utf8",
     }).trim();
+    const ref =
+      stashRef ||
+      execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd,
+        encoding: "utf8",
+      }).trim();
     if (!ref) {
       return null;
     }
