@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runLoop } from "../../tools/agent_driver/loop";
+import {
+  MAX_CYCLES_EXCEEDED,
+  prepareTask,
+  runLoop,
+} from "../../tools/agent_driver/loop";
 import type { AgentDriver, Triage } from "../../tools/agent_driver/types";
 
 const passingTests = {
@@ -29,8 +33,11 @@ function initGitRepo(cwd: string): void {
 describe("test/triage/fix loop", () => {
   test("repairs a failing candidate then passes", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
     fs.writeFileSync(path.join(cwd, "TASK.md"), "Fix the bug");
     fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "Do not touch harness");
+    execFileSync("git", ["add", "TASK.md", "AI_RULES.md"], { cwd, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
     fs.mkdirSync(path.join(cwd, "artifacts", "cycles"), { recursive: true });
 
     let attempts = 0;
@@ -49,9 +56,11 @@ describe("test/triage/fix loop", () => {
       },
       async fix() {
         attempts += 1;
+        fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+        fs.writeFileSync(path.join(cwd, "src", "example.ts"), "export {}");
       },
       async verify() {
-        return { approved: true, reasons: ["matches TASK"] };
+        throw new Error("verifier removed from loop");
       },
     };
 
@@ -77,21 +86,8 @@ describe("test/triage/fix loop", () => {
             status: 1,
           };
         }
-        return {
-          ok: true,
-          command: "npm test",
-          stdout: "PASS",
-          stderr: "",
-          status: 0,
-        };
+        return passingTests;
       },
-      runRegression: () => ({
-        ok: true,
-        command: "npm test && npm run validate:mcp",
-        stdout: "PASS",
-        stderr: "",
-        status: 0,
-      }),
     });
 
     expect(result.status).toBe("PASS");
@@ -176,7 +172,7 @@ describe("test/triage/fix loop", () => {
         throw new Error("must not fix");
       },
       async verify() {
-        return { approved: true, reasons: ["matches TASK"] };
+        throw new Error("must not verify");
       },
     };
 
@@ -185,7 +181,6 @@ describe("test/triage/fix loop", () => {
       taskId: "01",
       driver,
       runTests: () => passingTests,
-      runRegression: () => passingTests,
     });
 
     expect(result.status).toBe("PASS");
@@ -219,5 +214,130 @@ describe("test/triage/fix loop", () => {
         runTests: () => passingTests,
       })
     ).rejects.toThrow(/PROTECTED_PATH_VIOLATION: candidate touched TASK.md/);
+  });
+
+  test("skips PR when tests pass and candidate diff is empty", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Already implemented");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+    execFileSync("git", ["add", "TASK.md", "AI_RULES.md"], {
+      cwd,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
+
+    let prCalls = 0;
+    const result = await runLoop({
+      cwd,
+      taskId: "01",
+      driver: {
+        async build() {},
+        async triage() {
+          throw new Error("must not triage");
+        },
+        async fix() {
+          throw new Error("must not fix");
+        },
+        async verify() {
+          throw new Error("must not verify");
+        },
+      },
+      skipBuild: true,
+      openPr: async () => {
+        prCalls += 1;
+        return { prUrl: "https://github.com/example/coffee/pull/1" };
+      },
+      runTests: () => passingTests,
+    });
+
+    expect(result.status).toBe("PASS");
+    expect(result.cycles).toBe(0);
+    expect(result.prSkipped).toContain("nothing to commit");
+    expect(prCalls).toBe(0);
+  });
+
+  test("opens PR when tests pass with agent product changes", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
+    fs.mkdirSync(path.join(cwd, "tasks"), { recursive: true });
+    fs.writeFileSync(path.join(cwd, "tasks", "TASK-01.md"), "Add drink sizes");
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "placeholder");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+    execFileSync("git", ["add", "."], { cwd, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
+
+    prepareTask(cwd, "01");
+
+    let prCalls = 0;
+    const result = await runLoop({
+      cwd,
+      taskId: "01",
+      driver: {
+        async build() {
+          fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+          fs.writeFileSync(path.join(cwd, "src", "sizes.ts"), "export {}");
+        },
+        async triage() {
+          throw new Error("must not triage");
+        },
+        async fix() {
+          throw new Error("must not fix");
+        },
+        async verify() {
+          throw new Error("must not verify");
+        },
+      },
+      openPr: async () => {
+        prCalls += 1;
+        return { prUrl: "https://github.com/example/coffee/pull/2" };
+      },
+      runTests: () => passingTests,
+    });
+
+    expect(result.status).toBe("PASS");
+    expect(result.prUrl).toBe("https://github.com/example/coffee/pull/2");
+    expect(prCalls).toBe(1);
+  });
+
+  test("returns max cycles exceeded after 5 fix loops", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Impossible");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+
+    const result = await runLoop({
+      cwd,
+      taskId: "88",
+      driver: {
+        async build() {},
+        async triage() {
+          return {
+            failure_class: "BUSINESS_LOGIC",
+            root_cause: "still broken",
+            evidence: ["fail"],
+            files_likely_involved: [],
+            files_that_should_not_change: ["TASK.md"],
+            fix_strategy: "cannot fix",
+            confidence: "low",
+          };
+        },
+        async fix() {},
+        async verify() {
+          throw new Error("must not verify");
+        },
+      },
+      skipBuild: true,
+      runTests: () => ({
+        ok: false,
+        command: "npm test",
+        stdout: "FAIL",
+        stderr: "",
+        status: 1,
+      }),
+    });
+
+    expect(result.status).toBe("FAIL");
+    expect(result.cycles).toBe(5);
+    expect(result.reason).toBe(MAX_CYCLES_EXCEEDED);
   });
 });

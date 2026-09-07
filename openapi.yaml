@@ -7,6 +7,18 @@ servers:
   - url: http://localhost:3000
     description: Local development
 paths:
+  /ping:
+    get:
+      operationId: ping
+      summary: Ping
+      description: Returns a simple liveness response.
+      responses:
+        "200":
+          description: Pong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PingResponse"
   /menu-items:
     get:
       operationId: listMenuItems
@@ -200,6 +212,12 @@ components:
       schema:
         type: integer
   schemas:
+    PingResponse:
+      type: object
+      required: [ping]
+      properties:
+        ping:
+          type: string
     Error:
       type: object
       required: [error]
