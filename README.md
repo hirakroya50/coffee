@@ -47,7 +47,7 @@ TASK_ID=01 npm run builder -- --no-pr
 
 GitHub: Actions → **Safi Continuous Builder** → Run workflow. Secrets: `CURSOR_API_KEY`. The workflow can open the PR with `GITHUB_TOKEN`.
 
-Proof tasks: `tasks/TASK-01.md` (sizes), `TASK-02.md` (milk), `TASK-03.md` (cancel), `TASK-04.md` (notes), `TASK-05.md` (extra shot), `TASK-06.md` (syrup), `TASK-07.md` (tip), `TASK-08.md` (menu filter), `TASK-09.md` (minimum order), `TASK-10.md` (ready timestamp).
+Proof tasks: `tasks/TASK-01.md` (sizes) through `TASK-10.md`, plus `TASK-11.md` (health check — easiest PR demo).
 
 ### Builder outcomes
 
@@ -64,7 +64,7 @@ Proof tasks: `tasks/TASK-01.md` (sizes), `TASK-02.md` (milk), `TASK-03.md` (canc
 
 If a task is **already implemented** on your branch, tests pass immediately (`cycles: 0`) and the builder may PASS without calling the verifier.
 
-To exercise the fix loop, run from a commit **before** that feature exists, or use a task whose acceptance tests still fail:
+To exercise the fix loop, run from a commit **before** that feature exists, or use a task whose acceptance tests still fail. For a quick **PR demo**, use `TASK_ID=11` (health check — one small endpoint).
 
 ```bash
 git checkout <commit-before-feature>
