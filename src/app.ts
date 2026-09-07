@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { registerCustomerRoutes } from "./customers";
 import { registerDocsRoutes } from "./docs";
+import { registerHealthRoutes } from "./health";
 import { registerMenuRoutes } from "./menu";
 import { registerOrderRoutes } from "./orders";
 import type { SqlClient } from "./sql";
@@ -8,6 +9,7 @@ import type { SqlClient } from "./sql";
 export function createApp(db: SqlClient) {
   const app = express();
   app.use(express.json());
+  registerHealthRoutes(app);
   registerDocsRoutes(app);
   registerMenuRoutes(app, db);
   registerCustomerRoutes(app, db);
