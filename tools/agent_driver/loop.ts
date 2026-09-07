@@ -2,8 +2,11 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { parseFailingTests, writeFailureBundle } from "../../harness/failure-bundle";
-import { gitChangedFiles, gitDiff } from "../../harness/git";
-import { assertProtectedUnchanged } from "../../harness/protect";
+import { gitDiff } from "../../harness/git";
+import {
+  assertProtectedSnapshotUnchanged,
+  snapshotProtected,
+} from "../../harness/protect";
 import { cycleDir, runFull, runTargeted, type CommandResult } from "../../harness/run";
 import type { AgentDriver, Triage, VerifierResult } from "./types";
 
@@ -38,10 +41,11 @@ export async function runLoop(options: {
   const { cwd, taskId, driver } = options;
   const task = fs.readFileSync(path.join(cwd, "TASK.md"), "utf8");
   const rules = fs.readFileSync(path.join(cwd, "AI_RULES.md"), "utf8");
+  const protectedBaseline = snapshotProtected(cwd);
 
   if (!options.skipBuild) {
     await driver.build(task, cwd);
-    assertProtectedUnchanged(gitChangedFiles(cwd));
+    assertProtectedSnapshotUnchanged(cwd, protectedBaseline);
   }
 
   const runTests =
@@ -113,7 +117,7 @@ export async function runLoop(options: {
       return { status: "BLOCKED", cycles: cycle, reason: triage.root_cause };
     }
     await driver.fix(triage, cwd);
-    assertProtectedUnchanged(gitChangedFiles(cwd));
+    assertProtectedSnapshotUnchanged(cwd, protectedBaseline);
     fs.writeFileSync(path.join(dir, "candidate.diff"), gitDiff(cwd));
     tests = runTests();
     fs.writeFileSync(
