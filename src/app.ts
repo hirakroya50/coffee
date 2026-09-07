@@ -8,6 +8,9 @@ import type { SqlClient } from "./sql";
 export function createApp(db: SqlClient) {
   const app = express();
   app.use(express.json());
+  app.get("/health", (_req, res) => {
+    res.json({ status: "ok", service: "coffee-shop" });
+  });
   registerDocsRoutes(app);
   registerMenuRoutes(app, db);
   registerCustomerRoutes(app, db);

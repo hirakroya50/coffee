@@ -1,3 +1,3 @@
-# TASK 2 — Milk choices
+# TASK 3 — Cancellation rule
 
-Drink orders may specify whole, skim, oat, or almond milk. Food is unaffected and must not include milk. Add this without changing orchestrator or harness logic. Task 1 size pricing must still pass.
+Orders may be cancelled only before PREPARING. Invalid transitions fail predictably (409). All prior ordering, size, and milk behavior must still pass.
