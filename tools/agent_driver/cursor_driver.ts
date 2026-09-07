@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Agent } from "@cursor/sdk";
+import { Agent, type Run } from "@cursor/sdk";
+import { extractJson } from "./json";
+import { resolveBuilderModel } from "./model";
 import type { AgentDriver, Triage, VerifierResult } from "./types";
 
 function promptFile(name: string): string {
@@ -10,26 +12,61 @@ function promptFile(name: string): string {
   );
 }
 
-function extractJson(text: string): unknown {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start < 0 || end < 0) {
-    throw new Error("Agent did not return JSON");
+const JSON_ONLY_FOLLOW_UP =
+  "Your previous reply was not a JSON object. Reply with ONLY valid JSON. No markdown fences. No explanation. Start with { and end with }.";
+
+async function collectText(run: Run): Promise<string> {
+  let streamed = "";
+  for await (const event of run.stream()) {
+    if (event.type === "assistant") {
+      for (const block of event.message.content) {
+        if (block.type === "text") {
+          streamed += block.text;
+        }
+      }
+    }
   }
-  return JSON.parse(text.slice(start, end + 1));
+  const waited = await run.wait();
+  const result = (waited.result ?? "").trim();
+  const stream = streamed.trim();
+  if (waited.status === "error") {
+    throw new Error(
+      `Agent run failed (${waited.status}): ${waited.error?.message ?? "unknown error"}`
+    );
+  }
+  if (stream) return stream;
+  return result;
 }
 
-async function runPrompt(prompt: string, cwd: string): Promise<string> {
+async function runPrompt(
+  prompt: string,
+  cwd: string,
+  options?: { expectJson?: boolean }
+): Promise<string> {
   const apiKey = process.env.CURSOR_API_KEY;
   if (!apiKey) {
     throw new Error("CURSOR_API_KEY is required for the Cursor agent driver");
   }
-  const result = await Agent.prompt(prompt, {
+
+  const model = await resolveBuilderModel(apiKey);
+
+  await using agent = await Agent.create({
     apiKey,
-    model: { id: "composer-2.5" },
+    model,
     local: { cwd },
   });
-  return String(result.result ?? "");
+
+  let text = await collectText(await agent.send(prompt));
+  if (options?.expectJson) {
+    try {
+      extractJson(text);
+      return text;
+    } catch {
+      text = await collectText(await agent.send(JSON_ONLY_FOLLOW_UP));
+      extractJson(text);
+    }
+  }
+  return text;
 }
 
 export function createCursorDriver(): AgentDriver {
@@ -44,7 +81,8 @@ export function createCursorDriver(): AgentDriver {
     async triage(failureBundleJson, repo) {
       const text = await runPrompt(
         `${promptFile("triage")}\n\n# failure-bundle.json\n${failureBundleJson}`,
-        repo
+        repo,
+        { expectJson: true }
       );
       return extractJson(text) as Triage;
     },
@@ -56,8 +94,9 @@ export function createCursorDriver(): AgentDriver {
     },
     async verify(task, repo, diff, testResults) {
       const text = await runPrompt(
-        `${promptFile("verifier")}\n\n# TASK.md\n${task}\n\n# diff\n${diff}\n\n# tests\n${testResults}`,
-        repo
+        `${promptFile("verifier")}\n\n# TASK.md\n${task}\n\n# diff\n${diff || "(no git diff)"}\n\n# tests\n${testResults}`,
+        repo,
+        { expectJson: true }
       );
       return extractJson(text) as VerifierResult;
     },
