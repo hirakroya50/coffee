@@ -113,7 +113,7 @@ paths:
     post:
       operationId: createOrder
       summary: Create an order
-      description: Creates an order using SQLite menu prices, computed line totals, and a PENDING status.
+      description: Creates an order using server menu prices, computed line totals, and a PENDING status. Rejects orders whose line-item subtotal (before tip) is below 500 cents.
       requestBody:
         required: true
         content:
