@@ -1,8 +1,30 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runLoop } from "../../tools/agent_driver/loop";
 import type { AgentDriver, Triage } from "../../tools/agent_driver/types";
+
+const passingTests = {
+  ok: true,
+  command: "npm test",
+  stdout: "PASS",
+  stderr: "",
+  status: 0,
+};
+
+function initGitRepo(cwd: string): void {
+  execFileSync("git", ["init", "--template="], {
+    cwd,
+    stdio: "pipe",
+    env: { ...process.env, GIT_TEMPLATE_DIR: "" },
+  });
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd, stdio: "pipe" });
+}
 
 describe("test/triage/fix loop", () => {
   test("repairs a failing candidate then passes", async () => {
@@ -129,5 +151,73 @@ describe("test/triage/fix loop", () => {
     });
     expect(result.status).toBe("BLOCKED");
     expect(prCalls).toBe(0);
+  });
+
+  test("does not treat a pre-copied TASK.md as a builder violation", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "See tasks/TASK-01.md");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "Do not touch harness");
+    execFileSync("git", ["add", "TASK.md", "AI_RULES.md"], {
+      cwd,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Add drink sizes SMALL MEDIUM LARGE");
+
+    const driver: AgentDriver = {
+      async build() {
+        fs.writeFileSync(path.join(cwd, "src-impl.ts"), "ok");
+      },
+      async triage() {
+        throw new Error("must not triage");
+      },
+      async fix() {
+        throw new Error("must not fix");
+      },
+      async verify() {
+        return { approved: true, reasons: ["matches TASK"] };
+      },
+    };
+
+    const result = await runLoop({
+      cwd,
+      taskId: "01",
+      driver,
+      runTests: () => passingTests,
+      runRegression: () => passingTests,
+    });
+
+    expect(result.status).toBe("PASS");
+  });
+
+  test("still rejects a builder that edits TASK.md after the run starts", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Add drink sizes");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+
+    const driver: AgentDriver = {
+      async build() {
+        fs.writeFileSync(path.join(cwd, "TASK.md"), "changed by agent");
+      },
+      async triage() {
+        throw new Error("must not triage");
+      },
+      async fix() {
+        throw new Error("must not fix");
+      },
+      async verify() {
+        throw new Error("must not verify");
+      },
+    };
+
+    await expect(
+      runLoop({
+        cwd,
+        taskId: "01",
+        driver,
+        runTests: () => passingTests,
+      })
+    ).rejects.toThrow(/PROTECTED_PATH_VIOLATION: candidate touched TASK.md/);
   });
 });
