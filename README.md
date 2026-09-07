@@ -27,16 +27,15 @@ Acceptance tests use in-memory Postgres (PGlite), not `DATABASE_URL`.
 
 ## TASK → Cursor build → harness
 
-1. Start from a known-good commit.
-2. Copy one file from `tasks/` into `TASK.md` (exactly one change).
-3. Protected tests live in `harness/acceptance/` (the builder must not edit them).
-4. Run the loop (needs `CURSOR_API_KEY`):
+1. Start from a known-good commit (`git pull` so orchestrator fixes are present).
+2. Protected tests live in `harness/acceptance/` (the builder must not edit them).
+3. Run the loop (needs `CURSOR_API_KEY`). `TASK_ID` loads `tasks/TASK-{id}.md` into `TASK.md` automatically:
 
 ```bash
 TASK_ID=01 npm run builder
 ```
 
-5. Inspect `artifacts/cycles/task-01/`. Max 5 triage/fix cycles. `SPEC_AMBIGUITY` stops as BLOCKED.
+4. Inspect `artifacts/cycles/task-01/`. Max 5 triage/fix cycles. `SPEC_AMBIGUITY` stops as BLOCKED.
 
 On **PASS** (tests + verifier), the builder creates a **new** branch `cursor/task-{id}-{timestamp}`, commits, pushes, and opens a **PR to `main`**. It does not merge. You still approve the PR.
 
@@ -49,3 +48,25 @@ TASK_ID=01 npm run builder -- --no-pr
 GitHub: Actions → **Safi Continuous Builder** → Run workflow. Secrets: `CURSOR_API_KEY`. The workflow can open the PR with `GITHUB_TOKEN`.
 
 Proof tasks: `tasks/TASK-01.md` (sizes), `TASK-02.md` (milk), `TASK-03.md` (cancel only before PREPARING).
+
+### Builder outcomes
+
+| Result | `cycles` | Meaning |
+|--------|----------|---------|
+| `PROTECTED_PATH_VIOLATION` | — | Agent edited `TASK.md` or `harness/acceptance/**` after loop start |
+| `FAIL` | `0` | Tests passed but verifier rejected the candidate diff |
+| `FAIL` | `1..5` | Triage/fix loop ran but tests still failed after 5 attempts |
+| `PASS` | `0` | Task already implemented (empty candidate diff) or fixed on first try |
+| `PASS` | `N` | Agent fixed failing tests in N cycles |
+| `BLOCKED` | `1..5` | Triage reported `SPEC_AMBIGUITY` |
+
+### Seeing the triage/fix loop
+
+If a task is **already implemented** on your branch, tests pass immediately (`cycles: 0`) and the builder may PASS without calling the verifier.
+
+To exercise the fix loop, run from a commit **before** that feature exists, or use a task whose acceptance tests still fail:
+
+```bash
+git checkout <commit-before-feature>
+TASK_ID=03 npm run builder -- --no-pr
+```

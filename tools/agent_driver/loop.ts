@@ -2,7 +2,11 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { parseFailingTests, writeFailureBundle } from "../../harness/failure-bundle";
-import { gitDiff } from "../../harness/git";
+import {
+  createLoopBaseline,
+  gitDiffSinceBaseline,
+  type LoopBaseline,
+} from "../../harness/git";
 import {
   assertProtectedSnapshotUnchanged,
   snapshotProtected,
@@ -28,6 +32,48 @@ function writeJson(file: string, value: unknown): void {
   fs.writeFileSync(file, JSON.stringify(value, null, 2));
 }
 
+export function taskSourcePath(cwd: string, taskId: string): string {
+  const padded = taskId.padStart(2, "0");
+  return path.join(cwd, "tasks", `TASK-${padded}.md`);
+}
+
+export function prepareTask(cwd: string, taskId: string): void {
+  const src = taskSourcePath(cwd, taskId);
+  if (!fs.existsSync(src)) {
+    throw new Error(
+      `Task file not found: tasks/TASK-${taskId.padStart(2, "0")}.md`
+    );
+  }
+  fs.copyFileSync(src, path.join(cwd, "TASK.md"));
+}
+
+function candidateDiff(cwd: string, loopBaseline: LoopBaseline | null): string {
+  return gitDiffSinceBaseline(cwd, loopBaseline).trim();
+}
+
+async function publishPass(
+  options: {
+    openPr?: OpenPrHook;
+    cwd: string;
+    taskId: string;
+    taskMarkdown: string;
+  },
+  cycles: number
+): Promise<LoopResult> {
+  const pass: LoopResult = { status: "PASS", cycles };
+  if (options.openPr) {
+    const published = await options.openPr({
+      cwd: options.cwd,
+      taskId: options.taskId,
+      taskMarkdown: options.taskMarkdown,
+    });
+    if (published?.prUrl) {
+      pass.prUrl = published.prUrl;
+    }
+  }
+  return pass;
+}
+
 export async function runLoop(options: {
   cwd: string;
   taskId: string;
@@ -42,6 +88,7 @@ export async function runLoop(options: {
   const task = fs.readFileSync(path.join(cwd, "TASK.md"), "utf8");
   const rules = fs.readFileSync(path.join(cwd, "AI_RULES.md"), "utf8");
   const protectedBaseline = snapshotProtected(cwd);
+  const loopBaseline = createLoopBaseline(cwd);
 
   if (!options.skipBuild) {
     await driver.build(task, cwd);
@@ -60,11 +107,17 @@ export async function runLoop(options: {
   let cycle = 0;
 
   const maybeVerify = async (): Promise<LoopResult> => {
-    const diff = gitDiff(cwd);
+    const diff = candidateDiff(cwd, loopBaseline);
+    if (tests.ok && !diff) {
+      return publishPass(
+        { openPr: options.openPr, cwd, taskId, taskMarkdown: task },
+        cycle
+      );
+    }
     const verdict: VerifierResult = await driver.verify(
       task,
       cwd,
-      diff,
+      diff || "(no git diff)",
       tests.stdout
     );
     writeJson(
@@ -74,18 +127,10 @@ export async function runLoop(options: {
     if (!verdict.approved) {
       return { status: "FAIL", cycles: cycle, reason: verdict.reasons.join("; ") };
     }
-    const pass: LoopResult = { status: "PASS", cycles: cycle };
-    if (options.openPr) {
-      const published = await options.openPr({
-        cwd,
-        taskId,
-        taskMarkdown: task,
-      });
-      if (published?.prUrl) {
-        pass.prUrl = published.prUrl;
-      }
-    }
-    return pass;
+    return publishPass(
+      { openPr: options.openPr, cwd, taskId, taskMarkdown: task },
+      cycle
+    );
   };
 
   if (tests.ok) {
@@ -102,7 +147,7 @@ export async function runLoop(options: {
       stdout: tests.stdout,
       stderr: tests.stderr,
       failing_tests: parseFailingTests(tests.stdout),
-      git_diff: gitDiff(cwd),
+      git_diff: candidateDiff(cwd, loopBaseline) || "(no git diff)",
       cycle,
       task_id: taskId,
     });
@@ -118,7 +163,10 @@ export async function runLoop(options: {
     }
     await driver.fix(triage, cwd);
     assertProtectedSnapshotUnchanged(cwd, protectedBaseline);
-    fs.writeFileSync(path.join(dir, "candidate.diff"), gitDiff(cwd));
+    fs.writeFileSync(
+      path.join(dir, "candidate.diff"),
+      candidateDiff(cwd, loopBaseline) || "(no git diff)"
+    );
     tests = runTests();
     fs.writeFileSync(
       path.join(dir, tests.ok ? "regression-test.txt" : "targeted-test.txt"),
@@ -147,6 +195,7 @@ export async function runLoop(options: {
 async function main() {
   const cwd = process.cwd();
   const taskId = process.env.TASK_ID ?? "01";
+  prepareTask(cwd, taskId);
   const { createCursorDriver } = await import("./cursor_driver");
   const { openPassPullRequest } = await import("./open_pr");
   const skipPr = process.argv.includes("--no-pr");
