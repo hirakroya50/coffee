@@ -21,6 +21,20 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
+function ensureGitIdentity(cwd: string): void {
+  try {
+    git(cwd, ["config", "user.email"]);
+    git(cwd, ["config", "user.name"]);
+  } catch {
+    git(cwd, [
+      "config",
+      "user.email",
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    ]);
+    git(cwd, ["config", "user.name", "github-actions[bot]"]);
+  }
+}
+
 function requireGh(cwd: string): void {
   try {
     execFileSync("gh", ["auth", "status"], { cwd, encoding: "utf8", stdio: "pipe" });
@@ -83,6 +97,7 @@ export function openPassPullRequest(options: {
     return { skipped: true, reason: "nothing to commit" };
   }
 
+  ensureGitIdentity(cwd);
   git(cwd, [
     "commit",
     "-m",

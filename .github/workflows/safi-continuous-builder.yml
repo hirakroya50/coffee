@@ -24,6 +24,10 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - name: Configure git identity for builder commits
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
       - name: Run continuous builder loop
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
