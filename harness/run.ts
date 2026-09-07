@@ -66,6 +66,10 @@ const TASK_ACCEPTANCE_FILES: Record<string, string> = {
   "09": "harness/acceptance/task-min-order.test.ts",
   "10": "harness/acceptance/task-ready-at.test.ts",
   "11": "harness/acceptance/task-health.test.ts",
+  "12": "harness/acceptance/task-ping.test.ts",
+  "13": "harness/acceptance/task-version.test.ts",
+  "14": "harness/acceptance/task-info.test.ts",
+  "15": "harness/acceptance/task-ready.test.ts",
 };
 
 export function taskAcceptanceFile(taskId: string): string | undefined {
