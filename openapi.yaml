@@ -7,6 +7,18 @@ servers:
   - url: http://localhost:3000
     description: Local development
 paths:
+  /info:
+    get:
+      operationId: getServiceInfo
+      summary: Service info
+      description: Returns the service name and API version identifier.
+      responses:
+        "200":
+          description: Service metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceInfo"
   /menu-items:
     get:
       operationId: listMenuItems
@@ -206,6 +218,12 @@ components:
       properties:
         error:
           type: string
+    ServiceInfo:
+      type: object
+      required: [name, api]
+      properties:
+        name: { type: string }
+        api: { type: string }
     MenuItem:
       type: object
       required: [id, sku, name, description, category, price_cents, active]
