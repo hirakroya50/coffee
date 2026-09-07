@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { HttpError, type SqlClient } from "./sql";
 import { isOrderStatus, VALID_TRANSITIONS, type OrderStatus } from "./types";
 import { asyncRoute } from "./menu";
-import { priceOrderLine } from "./pricing";
+import { assertMinimumSubtotal, priceOrderLine } from "./pricing";
 
 type MenuItemRow = {
   id: number;
@@ -114,6 +114,8 @@ export function registerOrderRoutes(app: Express, db: SqlClient): void {
               milk: pricedLine.milk,
             });
           }
+
+          assertMinimumSubtotal(totalCents);
 
           const orderResult = await tx.query<{ id: number }>(
             `INSERT INTO orders (customer_id, status, total_cents)

@@ -7,6 +7,17 @@ import {
   type MilkChoice,
 } from "./types";
 
+export const MIN_ORDER_SUBTOTAL_CENTS = 500;
+
+export function assertMinimumSubtotal(subtotalCents: number): void {
+  if (subtotalCents < MIN_ORDER_SUBTOTAL_CENTS) {
+    throw new HttpError(
+      400,
+      `order subtotal must be at least ${MIN_ORDER_SUBTOTAL_CENTS} cents`
+    );
+  }
+}
+
 export type MenuItemForPrice = {
   price_cents: number;
   category: string;
