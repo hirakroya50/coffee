@@ -223,12 +223,13 @@ components:
         $ref: "#/components/schemas/MenuItem"
     Customer:
       type: object
-      required: [id, name, email, created_at]
+      required: [id, name, email, created_at, total_orders]
       properties:
         id: { type: integer }
         name: { type: string }
         email: { type: string }
         created_at: { type: string }
+        total_orders: { type: integer }
     CreateCustomerRequest:
       type: object
       required: [name, email]

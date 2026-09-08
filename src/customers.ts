@@ -22,7 +22,7 @@ export function registerCustomerRoutes(app: Express, db: SqlClient): void {
            RETURNING id, name, email, created_at`,
           [name.trim(), email.trim()]
         );
-        res.status(201).json(inserted.rows[0]);
+        res.status(201).json({ ...inserted.rows[0], total_orders: 0 });
       } catch (err) {
         if (isUniqueViolation(err)) {
           res.status(409).json({ error: "email already exists" });
@@ -37,7 +37,10 @@ export function registerCustomerRoutes(app: Express, db: SqlClient): void {
     "/customers/:id",
     asyncRoute(async (req, res) => {
       const result = await db.query(
-        `SELECT id, name, email, created_at FROM customers WHERE id = $1`,
+        `SELECT c.id, c.name, c.email, c.created_at,
+                (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = c.id) AS total_orders
+         FROM customers c
+         WHERE c.id = $1`,
         [Number(req.params.id)]
       );
       const customer = result.rows[0];
