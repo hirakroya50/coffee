@@ -31,8 +31,10 @@ Acceptance tests use in-memory Postgres (PGlite), not `DATABASE_URL`.
 flowchart LR
   task[Task + workflow] --> build[AI build]
   build --> test[Run tests]
-  test -->|pass| pr[Open PR]
-  test -->|fail| fix[Fix up to 5x]
+  test -->|pass| verify[Independent verifier]
+  verify -->|approved| pr[Open PR]
+  verify -->|rejected| fix[Fix up to 5x]
+  test -->|fail| fix
   fix --> test
   fix -->|still fail| fail[max cycles exceeded]
 ```
@@ -40,7 +42,7 @@ flowchart LR
 1. Push the repo (includes `tasks/TASK-{id}.md` and `harness/acceptance/` tests).
 2. GitHub: **Actions → Safi Continuous Builder → Run workflow**.
 3. Set `task_id` (default **12** — ping demo; also try **11–15** for easy PRs).
-4. Flow: **build → test → pass → PR**, or **fail → fix (max 5) → test → pass → PR**.
+4. Flow: **build → test → verify → pass → PR**, or **fail/reject → fix (max 5) → test → verify → pass → PR**.
 
 `TASK_ID` loads `tasks/TASK-{id}.md` automatically. No manual copy into `TASK.md`.
 
@@ -54,7 +56,7 @@ TASK_ID=11 npm run builder -- --no-pr   # local dry run
 |------|--------|
 | 1 | Use `task_id: 12` (or 11–15) for a single-route demo |
 | 2 | Run workflow on your feature branch |
-| 3 | Watch `[builder]` logs: Building → Running tests → Fix cycle N → PR |
+| 3 | Watch `[builder]` logs: Building → Running tests → Verifier → Fix cycle N → PR |
 | 4 | On success, open the `prUrl` from the job log JSON |
 
 **Success:**
@@ -75,13 +77,33 @@ TASK_ID=11 npm run builder -- --no-pr   # local dry run
 { "status": "FAIL", "cycles": 5, "reason": "max cycles exceeded, after 5 loop circle" }
 ```
 
+**Verifier rejected after max fix cycles:**
+
+```json
+{ "status": "FAIL", "cycles": 5, "reason": "verifier rejected: scope expanded", "verifierApproved": false }
+```
+
+### Cycle artifacts
+
+Each run writes under `artifacts/cycles/task-{id}/`:
+
+| File | When |
+|------|------|
+| `run-report.json` | Final loop result |
+| `cycle-NN/triage.json` | Test failure or verifier rejection |
+| `cycle-NN/verifier.json` | Independent verifier review (non-empty diff + tests pass) |
+| `cycle-NN/failure-bundle.json` | Machine-readable test failure |
+| `cycle-NN/candidate.diff` | Agent changes since loop start |
+
+Verifier runs only when tests pass **and** the candidate diff is non-empty. If the verifier rejects, the loop re-enters fix (same 5-cycle budget) before opening a PR.
+
 ### Builder outcomes
 
 | Result | Meaning |
 |--------|---------|
 | `PASS` + `prUrl` | Tests passed, PR opened to `main` |
 | `PASS` + `prSkipped` | Tests passed, nothing new to commit |
-| `FAIL` + `cycles: 5` | Fix loop exhausted |
+| `FAIL` + `cycles: 5` | Fix loop exhausted or verifier rejected after max cycles |
 | `BLOCKED` | Triage reported `SPEC_AMBIGUITY` |
 | `PROTECTED_PATH_VIOLATION` | Agent edited `TASK.md` or acceptance tests |
 

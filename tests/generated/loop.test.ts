@@ -7,7 +7,7 @@ import {
   prepareTask,
   runLoop,
 } from "../../tools/agent_driver/loop";
-import type { AgentDriver, Triage } from "../../tools/agent_driver/types";
+import type { AgentDriver, Triage, VerifierResult } from "../../tools/agent_driver/types";
 
 const passingTests = {
   ok: true,
@@ -16,6 +16,10 @@ const passingTests = {
   stderr: "",
   status: 0,
 };
+
+function approveVerify(): AgentDriver["verify"] {
+  return async () => ({ approved: true, reasons: ["mock approve"] });
+}
 
 function initGitRepo(cwd: string): void {
   execFileSync("git", ["init", "--template="], {
@@ -41,6 +45,7 @@ describe("test/triage/fix loop", () => {
     fs.mkdirSync(path.join(cwd, "artifacts", "cycles"), { recursive: true });
 
     let attempts = 0;
+    let verifyCalls = 0;
     const driver: AgentDriver = {
       async build() {},
       async triage() {
@@ -60,7 +65,8 @@ describe("test/triage/fix loop", () => {
         fs.writeFileSync(path.join(cwd, "src", "example.ts"), "export {}");
       },
       async verify() {
-        throw new Error("verifier removed from loop");
+        verifyCalls += 1;
+        return { approved: true, reasons: ["diff matches TASK"] };
       },
     };
 
@@ -93,8 +99,10 @@ describe("test/triage/fix loop", () => {
     expect(result.status).toBe("PASS");
     expect(result.cycles).toBe(1);
     expect(result.prUrl).toBe("https://github.com/example/coffee/pull/1");
+    expect(result.verifierApproved).toBe(true);
     expect(prCalls).toBe(1);
     expect(attempts).toBe(1);
+    expect(verifyCalls).toBe(1);
     const triage = JSON.parse(
       fs.readFileSync(
         path.join(cwd, "artifacts/cycles/task-99/cycle-01/triage.json"),
@@ -102,12 +110,16 @@ describe("test/triage/fix loop", () => {
       )
     );
     expect(triage.failure_class).toBe("BUSINESS_LOGIC");
+    expect(
+      fs.existsSync(path.join(cwd, "artifacts/cycles/task-99/cycle-01/verifier.json"))
+    ).toBe(true);
   });
 
   test("stops immediately on SPEC_AMBIGUITY", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
     fs.writeFileSync(path.join(cwd, "TASK.md"), "Make it better");
     fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+    let verifyCalls = 0;
     const driver: AgentDriver = {
       async build() {},
       async triage() {
@@ -125,6 +137,7 @@ describe("test/triage/fix loop", () => {
         throw new Error("must not fix");
       },
       async verify() {
+        verifyCalls += 1;
         throw new Error("must not verify");
       },
     };
@@ -147,6 +160,7 @@ describe("test/triage/fix loop", () => {
     });
     expect(result.status).toBe("BLOCKED");
     expect(prCalls).toBe(0);
+    expect(verifyCalls).toBe(0);
   });
 
   test("does not treat a pre-copied TASK.md as a builder violation", async () => {
@@ -171,9 +185,7 @@ describe("test/triage/fix loop", () => {
       async fix() {
         throw new Error("must not fix");
       },
-      async verify() {
-        throw new Error("must not verify");
-      },
+      verify: approveVerify(),
     };
 
     const result = await runLoop({
@@ -201,9 +213,7 @@ describe("test/triage/fix loop", () => {
       async fix() {
         throw new Error("must not fix");
       },
-      async verify() {
-        throw new Error("must not verify");
-      },
+      verify: approveVerify(),
     };
 
     await expect(
@@ -216,7 +226,7 @@ describe("test/triage/fix loop", () => {
     ).rejects.toThrow(/PROTECTED_PATH_VIOLATION: candidate touched TASK.md/);
   });
 
-  test("skips PR when tests pass and candidate diff is empty", async () => {
+  test("skips verify when diff empty", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
     initGitRepo(cwd);
     fs.writeFileSync(path.join(cwd, "TASK.md"), "Already implemented");
@@ -227,6 +237,7 @@ describe("test/triage/fix loop", () => {
     });
     execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
 
+    let verifyCalls = 0;
     let prCalls = 0;
     const result = await runLoop({
       cwd,
@@ -240,7 +251,8 @@ describe("test/triage/fix loop", () => {
           throw new Error("must not fix");
         },
         async verify() {
-          throw new Error("must not verify");
+          verifyCalls += 1;
+          return { approved: true, reasons: ["mock"] };
         },
       },
       skipBuild: true,
@@ -255,9 +267,10 @@ describe("test/triage/fix loop", () => {
     expect(result.cycles).toBe(0);
     expect(result.prSkipped).toContain("nothing to commit");
     expect(prCalls).toBe(0);
+    expect(verifyCalls).toBe(0);
   });
 
-  test("opens PR when tests pass with agent product changes", async () => {
+  test("opens PR when verify approves product changes", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
     initGitRepo(cwd);
     fs.mkdirSync(path.join(cwd, "tasks"), { recursive: true });
@@ -269,6 +282,7 @@ describe("test/triage/fix loop", () => {
 
     prepareTask(cwd, "01");
 
+    let verifyCalls = 0;
     let prCalls = 0;
     const result = await runLoop({
       cwd,
@@ -285,7 +299,8 @@ describe("test/triage/fix loop", () => {
           throw new Error("must not fix");
         },
         async verify() {
-          throw new Error("must not verify");
+          verifyCalls += 1;
+          return { approved: true, reasons: ["diff matches TASK"] };
         },
       },
       openPr: async () => {
@@ -297,7 +312,109 @@ describe("test/triage/fix loop", () => {
 
     expect(result.status).toBe("PASS");
     expect(result.prUrl).toBe("https://github.com/example/coffee/pull/2");
+    expect(result.verifierApproved).toBe(true);
     expect(prCalls).toBe(1);
+    expect(verifyCalls).toBe(1);
+    expect(
+      fs.existsSync(path.join(cwd, "artifacts/cycles/task-01/cycle-00/verifier.json"))
+    ).toBe(true);
+  });
+
+  test("verify rejects then fix then approves", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Add feature");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+    execFileSync("git", ["add", "TASK.md", "AI_RULES.md"], { cwd, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
+
+    let verifyCalls = 0;
+    let verifierFixes = 0;
+    let prCalls = 0;
+    const result = await runLoop({
+      cwd,
+      taskId: "77",
+      driver: {
+        async build() {
+          fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+          fs.writeFileSync(path.join(cwd, "src", "feature.ts"), "export {}");
+        },
+        async triage() {
+          throw new Error("must not triage");
+        },
+        async fix(triage) {
+          if (triage.failure_class === "OUTPUT_VALIDATION") {
+            verifierFixes += 1;
+            fs.writeFileSync(
+              path.join(cwd, "src", "feature.ts"),
+              "export const fixed = true;"
+            );
+          }
+        },
+        async verify() {
+          verifyCalls += 1;
+          if (verifyCalls === 1) {
+            return { approved: false, reasons: ["hard-coded shortcut detected"] };
+          }
+          return { approved: true, reasons: ["clean implementation"] };
+        },
+      },
+      openPr: async () => {
+        prCalls += 1;
+        return { prUrl: "https://github.com/example/coffee/pull/3" };
+      },
+      runTests: () => passingTests,
+    });
+
+    expect(result.status).toBe("PASS");
+    expect(result.cycles).toBe(1);
+    expect(result.verifierApproved).toBe(true);
+    expect(verifyCalls).toBe(2);
+    expect(verifierFixes).toBe(1);
+    expect(prCalls).toBe(1);
+    const verifierTriage = JSON.parse(
+      fs.readFileSync(
+        path.join(cwd, "artifacts/cycles/task-77/cycle-01/triage.json"),
+        "utf8"
+      )
+    );
+    expect(verifierTriage.failure_class).toBe("OUTPUT_VALIDATION");
+  });
+
+  test("verify rejects until max fix cycles", async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "loop-"));
+    initGitRepo(cwd);
+    fs.writeFileSync(path.join(cwd, "TASK.md"), "Add feature");
+    fs.writeFileSync(path.join(cwd, "AI_RULES.md"), "rules");
+    execFileSync("git", ["add", "TASK.md", "AI_RULES.md"], { cwd, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd, stdio: "pipe" });
+
+    let verifyCalls = 0;
+    const result = await runLoop({
+      cwd,
+      taskId: "66",
+      driver: {
+        async build() {
+          fs.mkdirSync(path.join(cwd, "src"), { recursive: true });
+          fs.writeFileSync(path.join(cwd, "src", "bad.ts"), "export {}");
+        },
+        async triage() {
+          throw new Error("must not triage");
+        },
+        async fix() {},
+        async verify() {
+          verifyCalls += 1;
+          return { approved: false, reasons: ["scope expanded"] };
+        },
+      },
+      runTests: () => passingTests,
+    });
+
+    expect(result.status).toBe("FAIL");
+    expect(result.cycles).toBe(5);
+    expect(result.reason).toContain("verifier rejected");
+    expect(result.verifierApproved).toBe(false);
+    expect(verifyCalls).toBe(6);
   });
 
   test("returns max cycles exceeded after 5 fix loops", async () => {
@@ -322,9 +439,7 @@ describe("test/triage/fix loop", () => {
           };
         },
         async fix() {},
-        async verify() {
-          throw new Error("must not verify");
-        },
+        verify: approveVerify(),
       },
       skipBuild: true,
       runTests: () => ({
