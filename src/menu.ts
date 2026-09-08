@@ -14,7 +14,7 @@ export function registerMenuRoutes(app: Express, db: SqlClient): void {
     "/menu-items",
     asyncRoute(async (_req, res) => {
       const result = await db.query(
-        `SELECT id, sku, name, description, category, price_cents, active
+        `SELECT id, sku, name, description, category, price_cents
          FROM menu_items WHERE active = 1 ORDER BY id`
       );
       res.json(result.rows);
