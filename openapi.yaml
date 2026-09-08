@@ -4,7 +4,7 @@ info:
   version: 0.0.0
   description: Baseline OpenAPI contract for the coffee shop reference backend.
 servers:
-  - url: http://localhost:3000
+  - url: http://localhost:3001
     description: Local development
 paths:
   /menu-items:

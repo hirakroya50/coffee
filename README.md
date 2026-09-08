@@ -12,9 +12,9 @@ npm run db:setup
 npm run dev
 ```
 
-- API: http://localhost:3000
-- Swagger UI: http://localhost:3000/docs
-- ReDoc: http://localhost:3000/redoc
+- API: http://localhost:3001
+- Swagger UI: http://localhost:3001/docs
+- ReDoc: http://localhost:3001/redoc
 
 ```bash
 npm test
