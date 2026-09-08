@@ -71,6 +71,7 @@ const TASK_ACCEPTANCE_FILES: Record<string, string> = {
   "14": "harness/acceptance/task-info.test.ts",
   "15": "harness/acceptance/task-ready.test.ts",
   "16": "harness/acceptance/task-customer-total-orders.test.ts",
+  "17": "harness/acceptance/task-menu-list-no-active.test.ts",
 };
 
 export function taskAcceptanceFile(taskId: string): string | undefined {
