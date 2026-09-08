@@ -217,20 +217,10 @@ components:
         category: { type: string, enum: [drink, food] }
         price_cents: { type: integer }
         active: { type: integer }
-    MenuItemListEntry:
-      type: object
-      required: [id, sku, name, description, category, price_cents]
-      properties:
-        id: { type: integer }
-        sku: { type: string }
-        name: { type: string }
-        description: { type: string }
-        category: { type: string, enum: [drink, food] }
-        price_cents: { type: integer }
     MenuItemList:
       type: array
       items:
-        $ref: "#/components/schemas/MenuItemListEntry"
+        $ref: "#/components/schemas/MenuItem"
     Customer:
       type: object
       required: [id, name, email, created_at]
