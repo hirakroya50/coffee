@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 export type OpenPrResult = {
   skipped?: boolean;
@@ -7,8 +9,30 @@ export type OpenPrResult = {
   reason?: string;
 };
 
+const PRODUCT_PATHS = [
+  "src",
+  "openapi.yaml",
+  "schema.sql",
+  "seed.sql",
+  "tests/generated",
+];
+
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function ensureGitIdentity(cwd: string): void {
+  try {
+    git(cwd, ["config", "user.email"]);
+    git(cwd, ["config", "user.name"]);
+  } catch {
+    git(cwd, [
+      "config",
+      "user.email",
+      "41898282+github-actions[bot]@users.noreply.github.com",
+    ]);
+    git(cwd, ["config", "user.name", "github-actions[bot]"]);
+  }
 }
 
 function requireGh(cwd: string): void {
@@ -39,6 +63,17 @@ function prTitle(taskMarkdown: string): string {
   return line.slice(0, 80);
 }
 
+function existingProductPaths(cwd: string): string[] {
+  const paths: string[] = [];
+  for (const rel of PRODUCT_PATHS) {
+    const full = path.join(cwd, rel);
+    if (fs.existsSync(full)) {
+      paths.push(rel);
+    }
+  }
+  return paths;
+}
+
 export function openPassPullRequest(options: {
   cwd: string;
   taskId: string;
@@ -47,9 +82,14 @@ export function openPassPullRequest(options: {
   const { cwd, taskId, taskMarkdown } = options;
   requireGh(cwd);
 
+  const productPaths = existingProductPaths(cwd);
+  if (productPaths.length === 0) {
+    return { skipped: true, reason: "nothing to commit" };
+  }
+
   const branch = branchName(taskId);
   git(cwd, ["checkout", "-b", branch]);
-  git(cwd, ["add", "-A"]);
+  git(cwd, ["add", "--", ...productPaths]);
 
   const staged = git(cwd, ["diff", "--cached", "--name-only"]);
   if (!staged) {
@@ -57,6 +97,7 @@ export function openPassPullRequest(options: {
     return { skipped: true, reason: "nothing to commit" };
   }
 
+  ensureGitIdentity(cwd);
   git(cwd, [
     "commit",
     "-m",
