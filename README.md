@@ -1,4 +1,4 @@
-# Coffee Shop API + Safi Continuous Builder
+# Coffee Shop Backend +  Continuous Builder and tester
 
 Express + TypeScript + Postgres. Schema and seed live in `schema.sql` and `seed.sql`.
 
