@@ -6,11 +6,12 @@ on:
       task_id:
         description: Task id used in artifacts/cycles/task-NN
         required: true
-        default: "01"
+        default: "12"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write
@@ -23,10 +24,15 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
+      - name: Configure git identity for builder commits
+        run: |
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
       - name: Run continuous builder loop
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           TASK_ID: ${{ github.event.inputs.task_id }}
+          CURSOR_MODEL: composer-2.5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run builder

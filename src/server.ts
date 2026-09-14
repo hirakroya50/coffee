@@ -10,7 +10,7 @@ async function main() {
     );
   }
 
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 3001);
   const { sql } = await openCloudDatabase(databaseUrl);
   const app = createApp(sql);
 
